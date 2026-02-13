@@ -1,68 +1,38 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
+import { AuthRequest } from '../middleware/auth';
 import { Store } from '../models/store';
+import bcrypt from 'bcrypt';
 
-export const uploadContent = async (req: Request, res: Response) => {
+export const uploadContent = async (req: AuthRequest, res: Response) => {
   try {
-    // Debug logging to see exactly what the frontend sends
-    console.log("--- New Upload Request ---");
-    console.log("Body:", req.body);
-    console.log("File:", req.file);
-
-    // Multer parses FormData, so 'text' and 'expirySeconds' are in req.body
-    const { text, expirySeconds } = req.body;
+    const { text, expiry, password, maxViews } = req.body;
     const file = req.file;
 
-    // 1. Validation: Ensure we have at least one type of content
-    // We check if 'text' is empty string AND 'file' is undefined
-    if ((!text || text.trim() === "") && !file) {
-      return res.status(400).json({ 
-        error: 'Payload missing. Please upload a file or enter text.' 
-      });
-    }
-
-    // 2. Expiry Logic (Converted to Seconds)
-    // Default to 600 seconds (10 minutes) if no custom time provided
-    const seconds = expirySeconds ? parseInt(expirySeconds) : 600;
-    const duration = seconds * 1000; // Convert to milliseconds
-    const expiresAt = Date.now() + duration;
-
-    let contentId: string;
-
-    // 3. Store the Content
-    if (file) {
-      // Handle File Upload
-      contentId = await Store.create({
-        type: 'file',
-        content: file.path, // Storing local path (simulating DB/Cloud URL)
-        originalName: file.originalname,
-        createdAt: Date.now(),
-        expiresAt
-      });
-    } else {
-      // Handle Text Upload
-      contentId = await Store.create({
-        type: 'text',
-        content: text, 
-        createdAt: Date.now(),
-        expiresAt
-      });
-    }
-
-    // 4. Generate Response
-    // Ensure this matches your frontend port (5173 by default)
-    const shareableLink = `http://localhost:5173/v/${contentId}`;
+    // Password Hashing (Feature: Password Protection)
+    const passwordHash = password ? await bcrypt.hash(password, 10) : null;
     
-    console.log(`Success! Generated link: ${shareableLink}`);
-    console.log(`Expires in: ${seconds} seconds`);
+    // Duration Logic
+    const duration = (expiry ? parseInt(expiry) : 600) * 1000;
 
-    res.status(201).json({ 
-      link: shareableLink, 
-      expiresAt,
-      message: 'Upload successful' 
+    const data = {
+      userId: req.user?.id, // Link to User if logged in
+      type: file ? 'file' : 'text',
+      content: file ? file.path : text,
+      originalName: file?.originalname,
+      expiresAt: Date.now() + duration,
+      passwordHash,
+      maxViews: maxViews ? parseInt(maxViews) : null
+    };
+
+    const result = await Store.createUpload(data);
+    
+    // Returns Link + Manual Delete Token
+    res.json({ 
+      link: `http://localhost:5173/v/${result.id}`, 
+      deleteToken: result.deleteToken 
     });
 
   } catch (error) {
-    console.error("Upload Controller Error:", error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    res.status(500).json({ error: 'Upload failed' });
   }
 };

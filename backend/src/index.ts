@@ -13,10 +13,11 @@ app.use(express.json());
 // Routes
 app.use('/api', router);
 
-// --- CRON JOB: Cleanup every 60 seconds ---
+// Feature: Background Job (Runs every 60 seconds)
 setInterval(() => {
+  console.log('⏰ Running cleanup...');
   Store.deleteExpired();
-}, 60 * 1000); 
+}, 60000);
 
 // Start Server
 app.listen(PORT, () => {

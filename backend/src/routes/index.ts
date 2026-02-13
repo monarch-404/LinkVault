@@ -1,26 +1,36 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { uploadContent } from '../controllers/upload.controller'; // Ensure these exist
-import { getContent } from '../controllers/content.controller';
-import { Store } from '../models/store'; // Import Store
+import { register, login } from '../controllers/auth.controller';
+import { uploadContent } from '../controllers/upload.controller'; // Update import
+import { getContent, deleteContent, getHistory } from '../controllers/content.controller'; // Update import
+import { authenticate } from '../middleware/auth';
 
 const router = Router();
-const upload = multer({ dest: 'uploads/' }); 
 
-// Define your endpoints here
-router.post('/upload', upload.single('file'), uploadContent);
-router.get('/content/:id', getContent);
+// Feature: File Validation (Max 5MB, Restricted Types)
+const upload = multer({
+  dest: 'uploads/',
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB Limit
+  fileFilter: (req, file, cb) => {
+    if (!file.originalname.match(/\.(jpg|jpeg|png|gif|txt|pdf|zip)$/)) {
+      return cb(new Error('File type not allowed!'));
+    }
+    cb(null, true);
+  }
+});
 
-// THis is for checking what I have sent on the server when I did not have a database but rather a dummy store.Can be removed later
-// --- ADD THIS DEBUG ROUTE ---
-// router.get('/debug', async (req, res) => {
-//   const allData = await Store.getAll();
-//   res.json({
-//     count: allData.length,
-//     data: allData
-//   });
-// });
+// Auth Routes
+router.post('/auth/register', register);
+router.post('/auth/login', login);
 
+// Upload (Protected by Auth Middleware)
+router.post('/upload', authenticate, upload.single('file'), uploadContent);
 
-// CRITICAL: You must export default here for the import to work
+// Content
+router.post('/content/:id', getContent); // POST to accept password
+router.delete('/content/:id', deleteContent);
+
+// User History
+router.get('/user/history', authenticate, getHistory);
+
 export default router;
