@@ -10,15 +10,15 @@ const getAuthHeader = () => {
 
 export const api = {
   // --- AUTH ---
-  register: (email: string, password: string) => 
-    axios.post(`${API_URL}/auth/register`, { email, password }),
+  register: (email: string, password: string, name: string) => 
+    axios.post(`${API_URL}/auth/register`, { email, password, name }),
 
   login: (email: string, password: string) => 
     axios.post(`${API_URL}/auth/login`, { email, password }),
 
   logout: () => {
     localStorage.removeItem('token');
-    localStorage.removeItem('userEmail');
+    localStorage.removeItem('userName');
     window.location.href = '/login';
   },
 
@@ -45,12 +45,22 @@ export const api = {
 
   // --- CONTENT ---
   getContent: (id: string, password?: string) => 
-    axios.post(`${API_URL}/content/${id}`, { password }),
+    axios.post(`${API_URL}/content/${id}`, 
+      { password }, 
+      { 
+        headers: { 'Content-Type': 'application/json' },
+        responseType: 'blob' 
+      }
+    ),
 
   deleteContent: (id: string, token: string) => 
     axios.delete(`${API_URL}/content/${id}`, { data: { token } }),
 
   // --- USER HISTORY ---
   getHistory: () => 
-    axios.get(`${API_URL}/user/history`, { headers: getAuthHeader() })
+    axios.get(`${API_URL}/user/history`, { headers: getAuthHeader() }),
+
+  // --- LIVE POLLING (The missing piece!) ---
+  getStatus: (id: string, token: string) => 
+    axios.get(`${API_URL}/content/${id}/status?token=${token}`)
 };

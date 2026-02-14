@@ -5,16 +5,18 @@ import bcrypt from 'bcrypt';
 
 export const Store = {
   // --- AUTHENTICATION ---
-  createUser: async (email: string, password: string) => {
+  createUser: async (email: string, password: string, name: string) => {
     const hash = await bcrypt.hash(password, 10);
     const res = await pool.query(
-      'INSERT INTO users (email, password_hash, created_at) VALUES ($1, $2, $3) RETURNING id, email',
-      [email, hash, Date.now()]
+      // Insert Name
+      'INSERT INTO users (email, password_hash, name, created_at) VALUES ($1, $2, $3, $4) RETURNING id, email, name',
+      [email, hash, name, Date.now()]
     );
     return res.rows[0];
   },
 
   findUser: async (email: string) => {
+    // Select name as well
     const res = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     return res.rows[0];
   },
@@ -46,9 +48,14 @@ export const Store = {
     await pool.query('UPDATE secure_uploads SET view_count = view_count + 1 WHERE id = $1', [id]);
   },
 
-  getUserHistory: async (userId: number) => {
+  // Inside Store object...
+  getUserHistory: async (userId: string) => {
+    // Make sure view_count and max_views are being SELECTed
     const res = await pool.query(
-      'SELECT id, original_name, type, created_at, view_count, max_views FROM secure_uploads WHERE user_id = $1 ORDER BY created_at DESC',
+      `SELECT id, type, original_name, created_at, expires_at, view_count, max_views, delete_token 
+       FROM content 
+       WHERE user_id = $1 
+       ORDER BY created_at DESC`,
       [userId]
     );
     return res.rows;

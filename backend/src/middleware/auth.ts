@@ -4,9 +4,11 @@ import jwt from 'jsonwebtoken';
 const SECRET = process.env.JWT_SECRET || 'secret';
 
 export interface AuthRequest extends Request {
-  user?: { id: number; email: string };
+  user?: {
+    id: string;
+    email?: string;
+  }; // <--- Telling TS that if 'user' exists, it definitely has an 'id' string
 }
-
 export const authenticate = (req: AuthRequest, res: Response, next: NextFunction) => {
   const token = req.headers['authorization']?.split(' ')[1];
   
