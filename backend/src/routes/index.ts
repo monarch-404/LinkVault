@@ -11,7 +11,7 @@ const router = Router();
 // Feature: File Validation (Max 10MB, Restricted Types)
 const upload = multer({
   storage: multer.memoryStorage(), // Holds the file in RAM temporarily!
-  limits: { fileSize: 5 * 1024 * 1024 } 
+  limits: { fileSize: 30 * 1024 * 1024 } 
 });
 
 // Auth Routes

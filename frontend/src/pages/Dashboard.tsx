@@ -2,6 +2,86 @@ import { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
+
+// --- Sub-component for Inline Copy Feedback ---
+// --- Sub-component for Inline Copy Feedback ---
+const CopyButton = ({ text, disabled }: { text: string; disabled?: boolean }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    if (disabled) return; // Prevent copying if dead
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      disabled={disabled}
+      className={`px-3 py-1 text-xs font-bold rounded transition-all duration-300 w-24 ${
+        disabled 
+          ? 'bg-gray-100 text-gray-400 cursor-not-allowed' // Grayed out if dead
+          : copied
+            ? 'bg-green-600 text-white scale-105'
+            : 'bg-blue-50 hover:bg-blue-100 text-blue-700'
+      }`}
+    >
+      {copied ? '✓ Copied!' : 'Copy Link'}
+    </button>
+  );
+};
+
+// --- Sub-component for Hold-to-Delete ---
+const DeleteButton = ({ onDelete, disabled }: { onDelete: () => void, disabled: boolean }) => {
+  const [holding, setHolding] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval>; // <-- The perfect cross-platform TS fix
+    if (holding) {
+      // Fill up to 100% over 1.5 seconds (15 steps of 100ms)
+      timer = setInterval(() => {
+        setProgress(p => {
+          if (p >= 100) {
+            clearInterval(timer);
+            setHolding(false);
+            onDelete();
+            return 100;
+          }
+          return p + (100 / 15);
+        });
+      }, 100);
+    } else {
+      setProgress(0); // Instantly reset if they let go early
+    }
+    return () => clearInterval(timer);
+  }, [holding, onDelete]);
+
+  return (
+    <button
+      onMouseDown={() => !disabled && setHolding(true)}
+      onMouseUp={() => setHolding(false)}
+      onMouseLeave={() => setHolding(false)}
+      onTouchStart={() => !disabled && setHolding(true)} // For Mobile
+      onTouchEnd={() => setHolding(false)}
+      disabled={disabled}
+      className={`relative overflow-hidden px-3 py-1 text-sm font-medium rounded transition-colors ${
+        disabled ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-red-50 text-red-600 hover:bg-red-100'
+      }`}
+    >
+      <span className="relative z-10 select-none">
+        {progress > 0 && progress < 100 ? 'Hold...' : 'Delete'}
+      </span>
+      {/* The Red Fill Animation */}
+      <div 
+        className="absolute top-0 left-0 h-full bg-red-600 opacity-20 transition-all duration-100 ease-linear"
+        style={{ width: `${progress}%` }}
+      />
+    </button>
+  );
+};
+
 interface HistoryItem {
   id: string;
   type: string;
@@ -39,7 +119,7 @@ export default function Dashboard() {
   }, []);
 
   const handleDelete = async (id: string, token: string) => {
-    if (!window.confirm("Are you sure you want to delete this link?")) return;
+    // if (!window.confirm("Are you sure you want to delete this link?")) return;
     
     try {
       await api.deleteContent(id, token);
@@ -111,20 +191,14 @@ export default function Dashboard() {
                       {isDead ? 'Expired' : `${Math.round((Number(item.expires_at) - Date.now()) / 60000)} mins`}
                     </td>
 
-                    <td className="p-4 text-right space-x-2">
-                      <button 
-                        onClick={() => copyLink(item.id)}
-                        disabled={isDead}
-                        className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-sm font-medium disabled:opacity-50"
-                      >
-                        Copy
-                      </button>
-                      <button 
-                        onClick={() => handleDelete(item.id, item.delete_token)}
-                        className="px-3 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 text-sm font-medium"
-                      >
-                        Delete
-                      </button>
+                    <td className="p-4 text-right flex justify-end gap-2">
+                        <CopyButton text={`${window.location.origin}/v/${item.id}`} disabled={isDead} />
+                        
+                        {/* The Magic Hold-to-Delete Button */}
+                        <DeleteButton 
+                          onDelete={() => handleDelete(item.id, item.delete_token)} 
+                          disabled={isDead} 
+                        />
                     </td>
                   </tr>
                 );

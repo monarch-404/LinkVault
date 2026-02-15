@@ -50,17 +50,20 @@ export const Store = {
 
   // Inside Store object...
   getUserHistory: async (userId: string) => {
-    // Make sure view_count and max_views are being SELECTed
-    const res = await pool.query(
-      `SELECT id, type, original_name, created_at, expires_at, view_count, max_views, delete_token 
-       FROM content 
-       WHERE user_id = $1 
-       ORDER BY created_at DESC`,
-      [userId]
-    );
-    return res.rows;
+    try {
+      const res = await pool.query(
+        `SELECT id, type, original_name, created_at, expires_at, view_count, max_views, delete_token 
+         FROM secure_uploads 
+         WHERE user_id = $1 
+         ORDER BY created_at DESC`,
+        [userId]
+      );
+      return res.rows; // If there are no links, this safely returns [] 
+    } catch (error) {
+      console.error("❌ DB History Error:", error);
+      throw error; 
+    }
   },
-
   // --- CLEANUP & DELETION ---
   delete: async (id: string) => {
     const res = await pool.query('DELETE FROM secure_uploads WHERE id = $1 RETURNING type, content', [id]);

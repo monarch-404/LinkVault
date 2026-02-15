@@ -24,8 +24,9 @@ export const uploadContent = async (req: Request, res: Response) => {
     }
 
     // Safety fallback for expiry
-    const expiryMinutes = expiry ? Number(expiry) : 60;
-    const expiresAt = Date.now() + expiryMinutes * 60 * 1000;
+    // --- THE FIX: The frontend sends SECONDS, so we only multiply by 1000 for milliseconds ---
+    const expirySeconds = expiry ? Number(expiry) : 3600; // Fallback to 1 hour
+    const expiresAt = Date.now() + (expirySeconds * 1000);
     const maxViewsNum = maxViews ? Number(maxViews) : null;
     const userId = (req as any).user?.id || null;
 
