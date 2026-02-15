@@ -1,151 +1,101 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { api } from '../services/api';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export default function ViewContent() {
   const { id } = useParams();
-  
-  // --- States ---
-  const [data, setData] = useState<any>(null); // Holds Secret Text
-  const [fileData, setFileData] = useState<{ url: string; name: string } | null>(null); // Holds File Info
+  const [data, setData] = useState<any>(null);
+  const [fileData, setFileData] = useState<{ url: string; name: string } | null>(null);
   const [password, setPassword] = useState('');
   const [isLocked, setIsLocked] = useState(false);
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true); // For initial page load
-  const [unlocking, setUnlocking] = useState(false); // NEW: For the button
+  const [loading, setLoading] = useState(true);
+  const [unlocking, setUnlocking] = useState(false);
 
   const fetchContent = async (pwd?: string) => {
     if (!id) return;
-    
     setError('');
-
-    if (pwd) {
-      setUnlocking(true);
-    } else {
-      setLoading(true);
-    }
+    pwd ? setUnlocking(true) : setLoading(true);
 
     try {
-      // --- THE UX FIX ---
-      // Force the UI to wait 600ms so the user can actually see the "Unlocking..." state
-      if (pwd) {
-        await sleep(600); 
-      }
-
+      if (pwd) await sleep(600); 
       const res = await api.getContent(id, pwd);
-      
       setIsLocked(false);
       setError('');
 
-      const contentType = res.headers['content-type'];
-
-      if (contentType && contentType.includes('application/json')) {
-        const textResponse = await res.data.text(); 
-        setData(JSON.parse(textResponse));
+      if (res.headers['content-type']?.includes('application/json')) {
+        setData(JSON.parse(await res.data.text()));
       } else {
         const url = window.URL.createObjectURL(res.data);
         let fileName = 'secure_file_download';
-        const contentDisposition = res.headers['content-disposition'];
-        if (contentDisposition) {
-          const match = contentDisposition.match(/filename="?([^"]+)"?/);
-          if (match && match.length >= 2) fileName = match[1];
-        }
+        const match = res.headers['content-disposition']?.match(/filename="?([^"]+)"?/);
+        if (match && match.length >= 2) fileName = match[1];
         setFileData({ url, name: fileName });
       }
     } catch (err: any) {
-      // ... keep your existing error logic ...
       let errorMsg = 'Link expired or invalid';
-      let status = err.response?.status;
-
-      if (err.response?.data instanceof Blob) {
-        const errText = await err.response.data.text();
-        try {
-          const errJson = JSON.parse(errText);
-          errorMsg = errJson.error || errorMsg;
-        } catch (e) {}
-      }
-
-      if (status === 403 || status === 401) {
-        setIsLocked(true);
-        setError(errorMsg);
-      } else {
-        setError(errorMsg);
-      }
+      if (err.response?.status === 403 || err.response?.status === 401) { setIsLocked(true); }
+      setError(errorMsg);
     } finally {
-      setLoading(false);
-      setUnlocking(false);
+      setLoading(false); setUnlocking(false);
     }
   };
 
-  useEffect(() => {
-    fetchContent();
-  }, [id]);
+  useEffect(() => { fetchContent(); }, [id]);
 
-  // --- RENDERING ---
+  if (loading) return <div className="text-center mt-32 text-[#4f46e5] font-bold animate-pulse">Decrypting secure link...</div>;
 
-  if (loading) {
-    return <div className="text-center mt-20 text-blue-500 font-bold animate-pulse">Decrypting secure link...</div>;
-  }
-
-  // 1. Password Screen
   if (isLocked) {
     return (
-      <div className="max-w-md mx-auto mt-20 p-8 bg-white shadow-lg rounded-xl text-center">
-        <h2 className="text-2xl font-bold mb-4">🔒 Protected Content</h2>
-        <p className="text-red-500 mb-4 font-medium">{error}</p>
-        <input 
-          type="password" 
-          placeholder="Enter Password..." 
-          className="border border-gray-300 p-3 rounded-lg w-full mb-4 focus:ring-2 focus:ring-blue-500 outline-none"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-        />
-        <button 
-        onClick={() => fetchContent(password)} 
-        disabled={unlocking} 
-        className={`w-full text-white px-4 py-3 rounded-lg font-bold transition ${
-          unlocking ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-        }`}
-        >
+      <div className="max-w-md mx-auto mt-32 p-10 bg-[#25262b] shadow-2xl rounded-3xl border border-[#373a40] text-center">
+        <div className="w-16 h-16 bg-[#1a1b1e] border border-[#373a40] rounded-2xl flex items-center justify-center text-2xl mx-auto mb-6">🔒</div>
+        <h2 className="text-2xl font-bold mb-2 text-white">Protected Content</h2>
+        <p className="text-gray-400 mb-8 text-sm">Enter the password to decrypt this link.</p>
+        {error && <p className="text-red-400 mb-4 text-sm font-medium">{error}</p>}
+        <input type="password" placeholder="Enter Password..." value={password} onChange={e => setPassword(e.target.value)} className="w-full p-4 bg-[#1a1b1e] border border-[#373a40] rounded-xl text-white focus:border-[#4f46e5] outline-none mb-4 text-center tracking-widest" />
+        <button onClick={() => fetchContent(password)} disabled={unlocking} className={`w-full text-white px-4 py-4 rounded-xl font-bold transition-all shadow-lg ${unlocking ? 'bg-[#4f46e5]/50' : 'bg-[#4f46e5] hover:bg-[#4338ca] shadow-indigo-500/20'}`}>
           {unlocking ? 'Unlocking...' : 'Unlock Content'}
         </button>
       </div>
     );
   }
 
-  // 2. Error Screen
   if (error) {
-    return <div className="text-center mt-20 text-red-500 text-xl font-bold">{error}</div>;
+    return (
+      <div className="flex flex-col items-center justify-center mt-32">
+        <h1 className="text-4xl font-bold text-white mb-2">Not found</h1>
+        <p className="text-gray-400 mb-8">The link you are looking for is missing or expired.</p>
+        <Link to="/" className="px-6 py-2 bg-[#4f46e5] text-white rounded-full font-medium hover:bg-[#4338ca] transition-colors">Main page</Link>
+      </div>
+    );
   }
 
-  // 3. Success Screen (Text or File)
   return (
-    <div className="max-w-2xl mx-auto mt-20 p-8 bg-white shadow-lg rounded-xl text-center">
-       <h1 className="text-2xl font-bold mb-6 text-gray-800">
-         {fileData ? 'Secure File Ready' : 'Secret Message'}
-       </h1>
+    <div className="max-w-4xl mx-auto mt-20 p-8 flex flex-col items-center">
+       <h1 className="text-4xl font-bold mb-12 text-white">Share files effortlessly</h1>
 
        {fileData ? (
-         // UI for Files
-         <div className="bg-gray-50 p-8 rounded-lg border border-gray-200 flex flex-col items-center gap-4">
-            <div className="text-5xl">📄</div>
-            <p className="font-mono text-gray-700 font-bold text-lg">{fileData.name}</p>
-            
-            {/* The Download Button */}
-            <a 
-              href={fileData.url} 
-              download={fileData.name}
-              className="mt-4 px-8 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition-all shadow-md flex items-center gap-2 transform active:scale-95"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-              Download File
-            </a>
+         <div className="flex flex-col items-center">
+            {/* The Custom CSS Folder Graphic from Screenshot 2 */}
+            <div className="relative w-48 h-36 bg-[#4f46e5] rounded-xl rounded-tl-none shadow-2xl flex flex-col justify-end p-4 group">
+              <div className="absolute -top-4 left-0 w-16 h-4 bg-[#4f46e5] rounded-t-lg"></div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-lg">
+                  <svg className="w-6 h-6 text-[#4f46e5]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                </div>
+              </div>
+              <p className="text-white text-xs font-medium truncate mt-auto relative z-10 text-center">{fileData.name}</p>
+            </div>
+
+            <div className="flex items-center gap-4 mt-12">
+              <Link to="/" className="px-6 py-2 border border-[#373a40] text-white rounded-full hover:bg-[#25262b] transition-colors font-medium">Back</Link>
+              <a href={fileData.url} download={fileData.name} className="px-6 py-2 bg-[#4f46e5] text-white rounded-full font-medium hover:bg-[#4338ca] shadow-lg shadow-indigo-500/20 transition-all">Download all</a>
+            </div>
          </div>
        ) : data ? (
-         // UI for Text
-         <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 font-mono whitespace-pre-wrap text-left text-gray-700">
+         <div className="bg-[#25262b] p-8 rounded-2xl border border-[#373a40] font-mono whitespace-pre-wrap text-left text-gray-300 w-full max-w-2xl shadow-2xl">
            {data.content}
          </div>
        ) : null}

@@ -1,436 +1,273 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api';
+import { useNavigate } from 'react-router-dom';
 
-// --- Sub-component for Inline Copy Feedback ---
-const CopyButton = ({ text, label = "Copy" }: { text: string; label?: string }) => {
+const CopyButton = ({ text, disabled }: { text: string; disabled?: boolean }) => {
   const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = () => { 
+    if (disabled) return;
+    navigator.clipboard.writeText(text); 
+    setCopied(true); 
+    setTimeout(() => setCopied(false), 2000); 
   };
-
   return (
-    <button
-      onClick={handleCopy}
-      className={`px-3 py-1 text-xs font-bold rounded transition-all duration-300 min-w-[70px] ${
-        copied
-          ? 'bg-green-600 text-white scale-105'
-          : 'bg-green-100 hover:bg-green-200 text-green-700'
+    <button 
+      onClick={handleCopy} 
+      disabled={disabled}
+      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all min-w-[80px] ${
+        disabled 
+          ? 'bg-[#1a1b1e] text-gray-600 cursor-not-allowed border border-[#373a40]' 
+          : copied 
+            ? 'bg-green-500/20 text-green-400' 
+            : 'bg-[#4f46e5]/10 hover:bg-[#4f46e5]/20 text-[#818cf8]'
       }`}
     >
-      {copied ? '✓ Copied!' : label}
+      {copied ? '✓ Copied' : 'Copy'}
     </button>
   );
 };
 
-// --- Helper to format seconds into a clean countdown string ---
 const formatCountdown = (seconds: number) => {
   if (seconds <= 0) return "Expired";
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  
-  if (d > 0) return `${d}d ${h}h ${m}m`;
-  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${m}m`;
   return `${m}m ${s}s`;
 };
 
 export default function UploadForm() {
-  // --- State Management ---
-  const [mode, setMode] = useState<'text' | 'file'>('text');
+  const navigate = useNavigate();
+  // --- STATE ---
+  const [mode, setMode] = useState<'text' | 'file'>('text'); 
   const [text, setText] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [password, setPassword] = useState('');
   const [maxViews, setMaxViews] = useState('');
-
-  // Expiry States 
   const [expiryPreset, setExpiryPreset] = useState<number | 'custom'>(600);
-  const [customDate, setCustomDate] = useState<string>(''); // For YYYY-MM-DD
-  const [customTime, setCustomTime] = useState<string>(''); // For HH:MM
-
-  // Results & UI States
+  const [customDate, setCustomDate] = useState('');
+  const [customTime, setCustomTime] = useState('');
+  
   const [generatedLink, setGeneratedLink] = useState('');
   const [deleteToken, setDeleteToken] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   
-  // --- THE FIX: Safely inside the component! ---
-  const [confirmDelete, setConfirmDelete] = useState(false); 
-
-  // Live Tracking States
   const [liveViews, setLiveViews] = useState(0);
   const [isDead, setIsDead] = useState(false);
   const [expiresAtTimestamp, setExpiresAtTimestamp] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState<number>(0);
+  
+  const [isDragging, setIsDragging] = useState(false);
 
-  // --- Live Polling Effect (Views) ---
+  const isLoggedIn = !!localStorage.getItem('token');
+
+  // --- EFFECTS ---
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
     if (generatedLink && deleteToken && !isDead) {
       const linkId = generatedLink.split('/v/')[1];
       const checkStatus = async () => {
-        try {
-          const res = await api.getStatus(linkId, deleteToken);
-          setLiveViews(res.data.view_count);
-          if (res.data.is_dead) {
-            setIsDead(true);
-            clearInterval(interval);
-          }
-        } catch (err) {
-          setIsDead(true);
-          clearInterval(interval);
-        }
+        try { const res = await api.getStatus(linkId, deleteToken); setLiveViews(res.data.view_count); if (res.data.is_dead) { setIsDead(true); clearInterval(interval); } } catch (err) { setIsDead(true); clearInterval(interval); }
       };
-      checkStatus();
-      interval = setInterval(checkStatus, 3000);
+      checkStatus(); interval = setInterval(checkStatus, 3000);
     }
     return () => clearInterval(interval);
   }, [generatedLink, deleteToken, isDead]);
 
-  // --- Live Countdown Timer Effect ---
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
     if (expiresAtTimestamp && !isDead) {
       interval = setInterval(() => {
         const remaining = Math.floor((expiresAtTimestamp - Date.now()) / 1000);
-        if (remaining <= 0) {
-          setTimeLeft(0);
-          setIsDead(true); // Automatically kill the UI when timer hits 0
-          clearInterval(interval);
-        } else {
-          setTimeLeft(remaining);
-        }
+        if (remaining <= 0) { setTimeLeft(0); setIsDead(true); clearInterval(interval); } else setTimeLeft(remaining);
       }, 1000);
     }
     return () => clearInterval(interval);
   }, [expiresAtTimestamp, isDead]);
 
-  // --- Check if user is logged in ---
-  const isLoggedIn = !!localStorage.getItem('token');
-
-  // --- Handlers ---
-  const handleModeSwitch = (newMode: 'text' | 'file') => {
-    setMode(newMode);
-    setGeneratedLink('');
-    setDeleteToken('');
-    setError('');
-  };
-
+  // --- HANDLERS ---
   const handleUpload = async () => {
-    setError('');
-    setGeneratedLink('');
-    setDeleteToken('');
-    setLiveViews(0);
-    setIsDead(false);
-    setExpiresAtTimestamp(null);
-    setLoading(true);
-
+    setError(''); setGeneratedLink(''); setDeleteToken(''); setLiveViews(0); setIsDead(false); setExpiresAtTimestamp(null); setLoading(true);
     try {
-      // 1. Calculate Exact Expiry Seconds
       let calculatedExpirySeconds = 600;
-
       if (expiryPreset === 'custom') {
-        if (!customDate || !customTime) {
-          throw new Error("Please select both a date and a time.");
-        }
-        
-        const selectedMs = new Date(`${customDate}T${customTime}`).getTime();
-        const diffMs = selectedMs - Date.now();
-        
-        if (diffMs <= 0) {
-          throw new Error("Custom expiry time must be in the future.");
-        }
+        if (!customDate || !customTime) throw new Error("Select both date and time.");
+        const diffMs = new Date(`${customDate}T${customTime}`).getTime() - Date.now();
+        if (diffMs <= 0) throw new Error("Time must be in the future.");
         calculatedExpirySeconds = Math.floor(diffMs / 1000);
-      } else {
-        calculatedExpirySeconds = Number(expiryPreset);
-      }
+      } else calculatedExpirySeconds = Number(expiryPreset);
 
-      // 2. API Call
       let res;
       const views = maxViews ? parseInt(maxViews) : undefined;
-
       if (mode === 'text') {
-        if (!text.trim()) throw new Error("Please enter some text.");
+        if (!text.trim()) throw new Error("Enter some text.");
         res = await api.uploadText(text, calculatedExpirySeconds, password, views);
       } else {
-        if (!file) throw new Error("Please select a file.");
+        if (!file) throw new Error("Select a file.");
         res = await api.uploadFile(file, calculatedExpirySeconds, password, views);
       }
-
-      // 3. Set Success States & Start Timer
-      const fullLink = `${window.location.origin}/v/${res.data.id}`;
-      setGeneratedLink(fullLink);
-      setDeleteToken(res.data.delete_token);
       
+      setGeneratedLink(`${window.location.origin}/v/${res.data.id}`);
+      setDeleteToken(res.data.delete_token);
       setExpiresAtTimestamp(Date.now() + (calculatedExpirySeconds * 1000));
       setTimeLeft(calculatedExpirySeconds);
-
-    } catch (err: any) {
-      console.error("Upload failed", err);
-      const msg = err.response?.data?.error || err.message || "Upload failed.";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
+    } catch (err: any) { setError(err.response?.data?.error || err.message || "Upload failed."); } finally { setLoading(false); }
   };
 
-  // --- Anonymous Emergency Delete Handler ---
   const handleEmergencyDelete = async () => {
-    try {
-      const linkId = generatedLink.split('/v/')[1];
-      await api.deleteContent(linkId, deleteToken);
-      setIsDead(true);
-      setTimeLeft(0);
-      setConfirmDelete(false); // Reset the button state
-    } catch (err) {
-      alert("Failed to delete the link. It may have already expired.");
+    try { await api.deleteContent(generatedLink.split('/v/')[1], deleteToken); setIsDead(true); setTimeLeft(0); setConfirmDelete(false); } catch (err) { alert("Failed to delete."); }
+  };
+
+  // Drag & Drop Handlers
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(false); };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const droppedFile = e.dataTransfer.files ? e.dataTransfer.files[0] : null;
+    if (droppedFile) {
+      if (droppedFile.size > 30 * 1024 * 1024) { setError("File is too large! Please select a file under 30MB."); setFile(null); } else { setFile(droppedFile); setError(''); }
     }
   };
 
   return (
-    <div className="max-w-md mx-auto p-6 bg-white rounded-xl shadow-lg mt-10 border border-gray-100">
-      <h2 className="text-2xl font-bold mb-6 text-center text-gray-800">
-        LinkVault Pro
-      </h2>
-
-      {/* 1. Mode Toggle */}
-      <div className="flex mb-6 bg-gray-100 p-1 rounded-lg">
-        <button
-          type="button"
-          onClick={() => handleModeSwitch('text')}
-          className={`flex-1 py-2 rounded-md text-sm font-semibold transition-all ${
-            mode === 'text' ? 'bg-white shadow text-blue-600' : 'text-gray-500'
-          }`}
-        >
-          Text
-        </button>
-        <button
-          type="button"
-          onClick={() => handleModeSwitch('file')}
-          className={`flex-1 py-2 rounded-md text-sm font-semibold transition-all ${
-            mode === 'file' ? 'bg-white shadow text-blue-600' : 'text-gray-500'
-          }`}
-        >
-          File
-        </button>
-      </div>
-
-      {/* 2. Main Input Area */}
-      <div className="mb-4">
-        {mode === 'text' ? (
-          <textarea
-            className="w-full border border-gray-300 p-3 rounded-lg h-32 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-            placeholder="Paste your secret text here..."
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-          />
-        ) : (
-          <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:bg-gray-50 transition-colors">
-            <input
-              type="file"
-              className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
-              onChange={(e) => {
-                const selectedFile = e.target.files ? e.target.files[0] : null;
-                
-                // --- 30MB Frontend Gatekeeper ---
-                if (selectedFile && selectedFile.size > 30 * 1024 * 1024) {
-                  setError("File is too large! Please select a file under 30MB.");
-                  setFile(null);
-                  e.target.value = ''; // Reset the input box
-                } else {
-                  setFile(selectedFile);
-                  setError(''); // Clear any previous errors
-                }
-              }}
-            />
-            <p className="text-xs text-gray-400 mt-3 font-medium">
-              Maximum file size: <span className="text-gray-600 font-bold">30MB</span>
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* 3. Pro Features */}
-      <div className="grid grid-cols-2 gap-3 mb-4 bg-gray-50 p-3 rounded-lg border border-gray-200">
-        <div>
-          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Password</label>
-          <input
-            type="password"
-            className="w-full border border-gray-300 p-2 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-            placeholder="(Optional)"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+    <div className="max-w-7xl mx-auto p-6 mt-12 flex flex-col lg:flex-row items-center lg:items-start gap-16">
+      
+      {/* LEFT COLUMN: The Interactive Dropzone Graphic */}
+      <div className="w-full lg:w-1/2 flex flex-col items-center">
+        {/* Toggle Mode */}
+        <div className="flex bg-[#25262b] p-1.5 rounded-xl w-64 mb-10 border border-[#373a40]">
+          <button onClick={() => setMode('text')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all duration-300 ${mode === 'text' ? 'bg-[#4f46e5] text-white shadow-[0_0_15px_rgba(79,70,229,0.5)]' : 'text-gray-400 hover:text-[#818cf8] hover:bg-[#4f46e5]/10'}`}>Text</button>
+          <button onClick={() => setMode('file')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all duration-300 ${mode === 'file' ? 'bg-[#4f46e5] text-white shadow-[0_0_15px_rgba(79,70,229,0.5)]' : 'text-gray-400 hover:text-[#818cf8] hover:bg-[#4f46e5]/10'}`}>File</button>
         </div>
-        <div>
-          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Max Views</label>
-          <input
-            type="number"
-            className="w-full border border-gray-300 p-2 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-            placeholder="e.g. 1"
-            value={maxViews}
-            onChange={(e) => setMaxViews(e.target.value)}
-          />
-        </div>
-      </div>
 
-      {/* 4. Advanced Timer Selection */}
-      <div className="mb-6">
-        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">
-          Self-Destruct Timer
-        </label>
-        <select
-          value={expiryPreset}
-          onChange={(e) => setExpiryPreset(e.target.value === 'custom' ? 'custom' : Number(e.target.value))}
-          className="w-full border border-gray-300 p-2 rounded-md bg-white focus:ring-2 focus:ring-blue-500 outline-none font-medium text-gray-700"
-        >
-          <option value={10}>⚡ 10 Seconds</option>
-          <option value={60}>⏱️ 1 Minute</option>
-          <option value={300}>⏱️ 5 Minutes</option>
-          <option value={600}>⏱️ 10 Minutes</option>
-          <option value={1800}>⏱️ 30 Minutes</option>
-          <option value={3600}>⏳ 1 Hour</option>
-          
-          {/* --- PREMIUM FEATURES: Only show these if logged in! --- */}
-          {isLoggedIn && (
-            <>
-              <option value={86400}>📅 1 Day</option>
-              <option value="custom">⚙️ Custom Date & Time...</option>
-            </>
-          )}
-        </select>
-
-        {/* Custom Date & Time Picker */}
-        {expiryPreset === 'custom' && isLoggedIn && (
-          <div className="mt-3 animate-in fade-in slide-in-from-top-1">
-            <div className="flex gap-2">
-              <input
-                type="date"
-                min={new Date().toISOString().split('T')[0]} 
-                value={customDate}
-                onChange={(e) => setCustomDate(e.target.value)}
-                className="flex-[3] border border-blue-300 p-2 rounded-md bg-blue-50 focus:ring-2 focus:ring-blue-500 outline-none text-blue-800 font-medium"
-              />
-              <input
-                type="time"
-                value={customTime}
-                onChange={(e) => setCustomTime(e.target.value)}
-                className="flex-[2] border border-blue-300 p-2 rounded-md bg-blue-50 focus:ring-2 focus:ring-blue-500 outline-none text-blue-800 font-medium"
-              />
+        {mode === 'file' ? (
+          // Advanced Drag & Drop CSS Folder
+          <div className="relative w-80 h-96 group" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
+            <div className={`absolute inset-0 rounded-3xl rounded-tl-none transform transition-all duration-500 ease-out ${isDragging ? 'bg-[#818cf8]/80 translate-y-12 translate-x-12 scale-105' : 'bg-[#818cf8]/40 translate-y-8 translate-x-8 group-hover:translate-y-10 group-hover:translate-x-10'}`}></div>
+            <div className={`absolute inset-0 rounded-3xl rounded-tl-none transform transition-all duration-500 ease-out ${isDragging ? 'bg-[#4f46e5]/90 translate-y-6 translate-x-6 scale-105' : 'bg-[#4f46e5]/60 translate-y-4 translate-x-4 group-hover:translate-y-5 group-hover:translate-x-5'}`}></div>
+            
+            {/* The Main Folder Card with light blue border default, rich blue hover */}
+            <div className={`absolute inset-0 rounded-3xl rounded-tl-none flex flex-col items-center justify-center cursor-pointer transition-all duration-500 ease-out border-2 ${isDragging ? 'bg-[#111318] border-[#818cf8] shadow-[0_0_40px_rgba(129,140,248,0.4)] scale-105' : 'bg-[#0B0C10] border-[#a5b4fc]/50 group-hover:bg-[#111318] group-hover:border-[#818cf8]/80 group-hover:shadow-[0_0_30px_rgba(129,140,248,0.2)]'}`}>
+              <div className={`absolute -top-6 left-0 w-32 h-6 rounded-t-xl border-t-2 border-l-2 border-r-2 transition-all duration-500 ${isDragging ? 'bg-[#111318] border-[#818cf8]' : 'bg-[#0B0C10] border-[#a5b4fc]/50 group-hover:bg-[#111318] group-hover:border-[#818cf8]/80'}`}></div>
+              
+              <input type="file" className="absolute inset-0 opacity-0 cursor-pointer z-20" onChange={(e) => {
+                 const f = e.target.files ? e.target.files[0] : null;
+                 if (f && f.size > 30 * 1024 * 1024) { setError("File over 30MB limit."); setFile(null); e.target.value = ''; } else { setFile(f); setError(''); }
+              }} />
+              
+              <div className={`w-20 h-20 rounded-full flex items-center justify-center text-4xl mb-6 shadow-xl z-10 font-light transition-all duration-500 ${isDragging ? 'bg-gradient-to-r from-[#4f46e5] to-[#818cf8] text-white scale-110 shadow-indigo-500/50' : 'bg-white text-[#0B0C10] group-hover:bg-gradient-to-tr group-hover:from-[#4f46e5] group-hover:to-[#818cf8] group-hover:text-white group-hover:scale-110'}`}>+</div>
+              <p className="text-white font-medium z-10 transition-colors">{isDragging ? 'Drop it here!' : (file ? file.name : "Choose or drag file")}</p>
+              {!file && !isDragging && <p className="text-gray-500 text-xs mt-2 z-10 transition-opacity">Up to 30MB</p>}
             </div>
-            <p className="text-[10px] text-gray-400 mt-1 pl-1">
-              Select the exact date and time this link should self-destruct.
-            </p>
           </div>
-        )}
-        
-        {/* Upsell message for anonymous users */}
-        {!isLoggedIn && (
-           <p className="text-[10px] text-blue-500 mt-1 pl-1 font-medium">
-             Log in to unlock 24-hour links and custom self-destruct timers!
-           </p>
+        ) : (
+          /* --- TEXT CARD --- */
+          <div className="w-full max-w-sm h-96 relative group">
+             <div className="absolute inset-0 bg-[#818cf8]/30 rounded-3xl transform translate-y-4 translate-x-4 transition-all duration-500 group-focus-within:translate-y-5 group-focus-within:translate-x-5 group-focus-within:bg-[#818cf8]/50 group-hover:bg-[#818cf8]/40 shadow-[0_0_30px_rgba(129,140,248,0.25)]"></div>
+             {/* Text Box with light blue border default, rich blue hover */}
+             <textarea 
+               className="absolute inset-0 w-full h-full bg-[#151720] border-2 border-[#a5b4fc]/50 p-6 rounded-3xl text-[#e0e7ff] outline-none resize-none transition-all duration-300 focus:border-[#818cf8] focus:bg-[#1a1c2e] focus:shadow-[0_0_20px_rgba(129,140,248,0.3)] hover:border-[#818cf8]/80 placeholder-[#818cf8]/50 font-mono" 
+               placeholder="Type or paste your secret message here..." 
+               value={text} 
+               onChange={(e) => setText(e.target.value)} 
+             />
+          </div>
         )}
       </div>
 
-      {/* 5. Submit Button */}
-      <button
-        type="button"
-        onClick={handleUpload}
-        disabled={loading}
-        className={`w-full py-3 rounded-lg text-white font-bold text-lg shadow-md transition-all flex justify-center items-center ${
-          loading
-            ? 'bg-blue-400 cursor-not-allowed'
-            : 'bg-blue-600 hover:bg-blue-700 hover:shadow-lg'
-        }`}
-      >
-        {loading ? 'Generating Link...' : 'Create Secure Link'}
-      </button>
-
-      {/* 6. Error Feedback */}
-      {error && (
-        <div className="mt-4 p-3 bg-red-50 border border-red-200 text-red-600 rounded-md text-sm text-center font-medium">
-          {error}
+      {/* RIGHT COLUMN: Typography & Settings */}
+      <div className="w-full lg:w-1/2 space-y-8 mt-4 lg:mt-0">
+        <div>
+          <h1 className="text-5xl font-bold text-white mb-4 tracking-tight">Share files securely.</h1>
+          <p className="text-gray-400 leading-relaxed text-lg max-w-md">
+            Simplify the way you share confidential files and secret texts. Our platform offers a seamless, zero-trace solution for your privacy needs.
+          </p>
         </div>
-      )}
 
-      {/* 7. Success Result & Live Dashboard */}
-      {generatedLink && (
-        <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg animate-in fade-in duration-300">
+        <div className="grid grid-cols-2 gap-4 max-w-md">
+          <div className="bg-[#25262b] p-4 rounded-2xl border border-[#373a40]">
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Password</label>
+            <input type="password" placeholder="(Optional)" className="w-full bg-[#1a1b1e] border border-[#373a40] p-2.5 rounded-xl text-white outline-none focus:border-[#818cf8] transition-colors" value={password} onChange={e => setPassword(e.target.value)} />
+          </div>
           
-          <div className="flex flex-col gap-2 mb-3 border-b border-green-200 pb-3">
-             <div className="flex justify-between items-center">
-                <p className="text-sm text-green-800 font-bold">🎉 Link Ready!</p>
+          <div className="bg-[#25262b] p-4 rounded-2xl border border-[#373a40]">
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Max Views</label>
+            <input 
+              type="number" 
+              min="1"
+              placeholder="Unlimited" 
+              className="w-full bg-[#1a1b1e] border border-[#373a40] p-2.5 rounded-xl text-white outline-none focus:border-[#818cf8] transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
+              value={maxViews} 
+              onKeyDown={(e) => {
+                if (['-', '.', 'e', 'E'].includes(e.key)) e.preventDefault();
+              }}
+              onChange={e => setMaxViews(e.target.value)} 
+            />
+          </div>
+        </div>
+
+        <div className="max-w-md">
+          <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Self-Destruct Timer</label>
+          <select value={expiryPreset} onChange={(e) => setExpiryPreset(e.target.value === 'custom' ? 'custom' : Number(e.target.value))} className="w-full bg-[#25262b] border border-[#373a40] p-3.5 rounded-2xl text-white outline-none focus:border-[#818cf8] appearance-none font-medium transition-colors cursor-pointer">
+            <option value={10}>⚡ 10 Seconds</option>
+            <option value={600}>⏱️ 10 Minutes</option>
+            <option value={3600}>⏳ 1 Hour</option>
+            {isLoggedIn && <><option value={86400}>📅 1 Day</option><option value="custom">⚙️ Custom Date & Time...</option></>}
+          </select>
+          {expiryPreset === 'custom' && isLoggedIn && (
+            <div className="flex gap-2 mt-2 animate-in fade-in slide-in-from-top-1">
+              <input type="date" min={new Date().toISOString().split('T')[0]} value={customDate} onChange={(e) => setCustomDate(e.target.value)} className="flex-[3] bg-[#25262b] border border-[#373a40] p-3 rounded-xl text-white outline-none focus:border-[#818cf8] transition-colors cursor-pointer" />
+              <input type="time" value={customTime} onChange={(e) => setCustomTime(e.target.value)} className="flex-[2] bg-[#25262b] border border-[#373a40] p-3 rounded-xl text-white outline-none focus:border-[#818cf8] transition-colors cursor-pointer" />
+            </div>
+          )}
+        </div>
+
+        {error && <div className="max-w-md p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-sm">{error}</div>}
+
+        {/* --- THE CREATE BUTTON (NEVER VANISHES) --- */}
+        <button onClick={handleUpload} disabled={loading} className={`w-full max-w-md py-4 rounded-2xl text-white font-bold text-lg shadow-xl transition-all duration-300 transform hover:-translate-y-1 ${loading ? 'bg-[#4f46e5]/50' : 'bg-[#4f46e5] hover:bg-blue-600 hover:shadow-[0_0_25px_rgba(59,130,246,0.6)]'}`}>
+          {loading ? 'Generating...' : 'Create Secure Link'}
+        </button>
+
+        {/* --- THE RESULT UI BOX --- */}
+        {generatedLink && (
+          <div className="max-w-md bg-[#25262b] border border-[#373a40] p-5 rounded-2xl animate-in fade-in mt-6">
+             <div className="flex justify-between items-center mb-4">
+                <p className="text-white font-bold">{isDead ? '💀 Link Destroyed' : '🎉 Link Ready!'}</p>
                 
-                <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold transition-all ${
-                  isDead ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
-                }`}>
-                  {!isDead && (
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-                    </span>
-                  )}
-                  {isDead ? 'Link Destroyed' : `Live Views: ${liveViews} ${maxViews ? `/ ${maxViews}` : ''}`}
-                </div>
+                {/* --- The Link Deleted Badge --- */}
+                {isDead ? (
+                  <div className="text-xs font-bold text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-1 rounded-lg tracking-wide uppercase">
+                    Link Deleted
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 bg-[#1a1b1e] border border-[#373a40] px-3 py-1 rounded-lg text-xs font-mono text-[#818cf8]">
+                    <span className="relative flex h-2 w-2"><span className="animate-ping absolute h-full w-full rounded-full bg-[#818cf8] opacity-75"></span><span className="relative rounded-full h-2 w-2 bg-[#4f46e5]"></span></span>
+                    Views: {liveViews} {maxViews ? `/ ${maxViews}` : ''} | {formatCountdown(timeLeft)}
+                  </div>
+                )}
              </div>
 
-             {!isDead && (
-               <div className="flex justify-between items-center bg-white p-2 rounded border border-orange-200 shadow-sm">
-                 <span className="text-xs font-bold text-orange-600 uppercase tracking-wider flex items-center gap-1">
-                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                   Self-Destruct in:
-                 </span>
-                 <span className="text-sm font-mono font-bold text-orange-600">
-                   {formatCountdown(timeLeft)}
-                 </span>
+             <div className="flex gap-2 mb-4">
+               <input readOnly value={generatedLink} className={`flex-1 bg-[#1a1b1e] border border-[#373a40] p-2.5 rounded-lg text-sm font-mono outline-none ${isDead ? 'text-gray-600 line-through' : 'text-gray-300'}`} />
+               <CopyButton text={generatedLink} disabled={isDead} />
+             </div>
+
+             {deleteToken && !isDead && (
+               <div className="pt-2 border-t border-[#373a40] mt-3">
+                 <button onClick={() => { confirmDelete ? handleEmergencyDelete() : setConfirmDelete(true); setTimeout(() => setConfirmDelete(false), 3000); }} className={`w-full py-2.5 font-bold rounded-xl text-sm transition-all duration-300 ${confirmDelete ? 'bg-red-600 text-white animate-pulse' : 'bg-[#1a1b1e] text-red-500 hover:bg-red-600 hover:text-white border border-[#373a40]'}`}>
+                   {confirmDelete ? 'Confirm Destroy?' : 'Destroy Link Now'}
+                 </button>
+                 <p className="text-center text-[10px] text-gray-500 mt-2 font-medium">
+                   {isLoggedIn ? "You can also manage this link later from your Dashboard." : "Leave this page, and the link will self-destruct when the timer runs out."}
+                 </p>
                </div>
              )}
           </div>
-
-          <div className="flex items-center gap-2 bg-white p-2 rounded border border-green-300 shadow-sm mb-3">
-            <input
-              readOnly
-              value={generatedLink}
-              className={`flex-1 text-sm outline-none bg-transparent truncate font-mono ${
-                isDead ? 'text-gray-400 line-through' : 'text-gray-600'
-              }`}
-            />
-            <CopyButton text={generatedLink} label="Copy Link" />
-          </div>
-
-          {/* --- Anonymous Users: Double-Tap Destroy Button --- */}
-          {deleteToken && !isLoggedIn && !isDead && (
-            <div className="pt-3 border-t border-green-200 mt-3">
-               <button
-                 onClick={() => {
-                   if (confirmDelete) {
-                     handleEmergencyDelete();
-                   } else {
-                     setConfirmDelete(true);
-                     // Reset back to normal after 3 seconds if they don't click again
-                     setTimeout(() => setConfirmDelete(false), 3000);
-                   }
-                 }}
-                 className={`w-full py-2 font-bold rounded-lg text-sm transition-all flex items-center justify-center gap-2 ${
-                   confirmDelete 
-                     ? 'bg-red-600 text-white hover:bg-red-700 animate-pulse' 
-                     : 'bg-red-100 text-red-700 hover:bg-red-200'
-                 }`}
-               >
-                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                 {confirmDelete ? 'Click again to permanently destroy!' : 'Destroy Link Now'}
-               </button>
-               <p className="text-center text-[10px] text-gray-500 mt-1">
-                 Leave this page, and the link will self-destruct when the timer runs out.
-               </p>
-            </div>
-          )}
-
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
