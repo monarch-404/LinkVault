@@ -103,8 +103,14 @@ export default function UploadForm() {
         res = await api.uploadFile(file, expirySeconds, password, views);
       }
 
-      setGeneratedLink(res.data.link);
-      setDeleteToken(res.data.deleteToken);
+      // --- THE FIX: Correctly map the backend response ---
+      // 1. Construct the full clickable URL using the 'id'
+      const fullLink = `${window.location.origin}/v/${res.data.id}`;
+      setGeneratedLink(fullLink);
+      
+      // 2. Read the snake_case 'delete_token' sent by the Express server
+      setDeleteToken(res.data.delete_token);
+
     } catch (err: any) {
       console.error("Upload failed", err);
       const msg = err.response?.data?.error || err.message || "Upload failed.";

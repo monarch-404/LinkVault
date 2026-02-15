@@ -2,6 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import router from './routes';
 import { Store } from './models/store';
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase for the background worker
+const supabaseUrl = process.env.SUPABASE_URL as string;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY as string;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 const app = express();
 const PORT = 5000;
@@ -33,9 +39,30 @@ app.use((req, res, next) => {
 app.use('/api', router);
 
 // 5. Cleanup Job
-setInterval(() => {
-  Store.deleteExpired();
-}, 60000);
+// --- AUTOMATED CLOUD GARBAGE COLLECTOR ---
+// This runs automatically every 1 hour (60 minutes * 60 seconds * 1000 ms)
+setInterval(async () => {
+  try {
+    // 1. Wipe from PostgreSQL and get the list of orphaned cloud files
+    const orphanedFiles = await Store.deleteExpired();
+    
+    if (orphanedFiles.length > 0) {
+      // 2. Extract just the string names into an array: ["file1.jpg", "file2.pdf"]
+      const fileNames = orphanedFiles.map(file => file.content);
+      
+      // 3. Tell Supabase to bulk-delete them all at once
+      const { error } = await supabase.storage.from('vault').remove(fileNames);
+      
+      if (error) {
+        console.error("❌ Background Cloud Sweep Failed:", error);
+      } else {
+        console.log(`✨ Sweeper: Wiped ${fileNames.length} expired files from cloud.`);
+      }
+    }
+  } catch (err) {
+    console.error("❌ Garbage Collector Crash:", err);
+  }
+}, 60 * 1000);
 
 import { NextFunction, Request, Response } from 'express';
 

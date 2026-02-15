@@ -2,8 +2,12 @@ import { Request, Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { Store } from '../models/store';
 import bcrypt from 'bcrypt';
-import path from 'path';
-import fs from 'fs';
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase securely using environment variables
+const supabaseUrl = process.env.SUPABASE_URL as string;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY as string;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Define the expected shape of the URL parameters
 interface ContentParams {
@@ -18,21 +22,30 @@ export const getContent = async (req: Request<ContentParams>, res: Response) => 
   const meta = await Store.getMetadata(id);
   if (!meta) return res.status(404).json({ error: 'Content not found' });
 
+  // --- NEW: Cloud Cleanup Helper ---
+  // A quick function to wipe the file from the cloud bucket
+  const deleteCloudFile = async () => {
+    if (meta.type === 'file' && meta.content) {
+      const { error } = await supabase.storage.from('vault').remove([meta.content]);
+      if (error) console.error("Cloud deletion error:", error);
+    }
+  };
+
   // 1. Expiry Check
   if (Date.now() > Number(meta.expires_at)) {
-    await Store.delete(id);
+    await deleteCloudFile(); // Wipe from cloud first
+    await Store.delete(id);  // Then wipe from DB
     return res.status(410).json({ error: 'Link expired' });
   }
 
-  // 2. View Limit Check (MOVED UP!)
-  // If the limit is already reached, delete it and block access immediately.
+  // 2. View Limit Check
   if (meta.max_views !== null && meta.view_count >= meta.max_views) {
-    await Store.delete(id);
+    await deleteCloudFile(); // Wipe from cloud first
+    await Store.delete(id);  // Then wipe from DB
     return res.status(410).json({ error: 'View limit reached' });
   }
 
-  // 3. Password Check Logic (MOVED DOWN)
-  // Now it only asks for a password if the link is actually still valid.
+  // 3. Password Check Logic
   if (meta.password_hash) {
     if (!password) {
       return res.status(403).json({ error: 'Password required', protected: true });
@@ -43,25 +56,50 @@ export const getContent = async (req: Request<ContentParams>, res: Response) => 
     }
   }
 
-  // 4. Increment and Serve
+  // 4. Increment View count in Database
   await Store.incrementView(id);
 
+  // 5. Serve Content (Cloud Download vs Text)
   if (meta.type === 'file') {
-    res.download(path.resolve(meta.content), meta.original_name);
+    // securely download from private bucket
+    const { data, error } = await supabase.storage
+      .from('vault')
+      .download(meta.content); 
+
+    if (error || !data) {
+      console.error("Supabase Download Error:", error);
+      return res.status(500).json({ error: 'Failed to retrieve file from cloud' });
+    }
+
+    // Convert the cloud Blob into a Node Buffer
+    const buffer = Buffer.from(await data.arrayBuffer());
+
+    // Send the buffer to the frontend as a disguised file
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${meta.original_name}"`);
+    return res.send(buffer);
   } else {
+    // It's just text, send it normally
     res.json({ type: 'text', content: meta.content });
   }
 };
 
 // 2. Manual Delete
 export const deleteContent = async (req: Request<ContentParams>, res: Response) => {
-  const { id } = req.params; // TypeScript now knows 'id' exists
+  const { id } = req.params; 
   const { token } = req.body;
 
   const meta = await Store.getMetadata(id);
   
   // Verify token matches
   if (meta && meta.delete_token === token) {
+    
+    // --- NEW: Manual Cloud Cleanup ---
+    if (meta.type === 'file' && meta.content) {
+      const { error } = await supabase.storage.from('vault').remove([meta.content]);
+      if (error) console.error("Cloud deletion error:", error);
+    }
+
     await Store.delete(id);
     res.json({ success: true, message: 'Content deleted successfully' });
   } else {
@@ -74,7 +112,7 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Login required' });
   
   try {
-    const history = await Store.getUserHistory(req.user.id);
+    const history = await Store.getUserHistory((req as any).user.id);
     res.json(history);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch history' });
@@ -84,7 +122,7 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
 // 4. Get Link Status (For Live Polling)
 export const getStatus = async (req: Request<ContentParams>, res: Response) => {
   const { id } = req.params;
-  const token = req.query.token as string; // We pass the token in the URL
+  const token = req.query.token as string; 
 
   const meta = await Store.getMetadata(id);
   
@@ -92,7 +130,6 @@ export const getStatus = async (req: Request<ContentParams>, res: Response) => {
     return res.status(404).json({ error: 'Content deleted or expired' });
   }
 
-  // Security Check: Only the creator (who has the delete token) can check the status
   if (meta.delete_token !== token) {
     return res.status(403).json({ error: 'Unauthorized to view status' });
   }

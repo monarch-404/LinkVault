@@ -77,12 +77,16 @@ export const Store = {
   // Feature: Background Job Logic
   deleteExpired: async () => {
     const now = Date.now();
-    const res = await pool.query('DELETE FROM secure_uploads WHERE expires_at < $1 RETURNING type, content', [now]);
-    res.rows.forEach(row => {
-      if (row.type === 'file' && fs.existsSync(row.content)) {
-        fs.unlinkSync(row.content);
-        console.log(`♻️ Auto-Cleaned: ${row.content}`);
-      }
-    });
+    // 1. Delete expired rows
+    // 2. ONLY return the ones that were actual files (we don't need to wipe text from the cloud)
+    const res = await pool.query(
+      `DELETE FROM secure_uploads 
+       WHERE expires_at < $1 AND type = 'file' 
+       RETURNING content`,
+      [now]
+    );
+    
+    // Returns an array of objects like: [ { content: "abcd-photo.jpg" }, ... ]
+    return res.rows; 
   }
 };
